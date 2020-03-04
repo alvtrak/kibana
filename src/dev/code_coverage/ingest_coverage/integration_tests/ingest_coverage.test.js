@@ -23,51 +23,68 @@ import { resolve } from 'path';
 
 const ROOT_DIR = resolve(__dirname, '../../../../..');
 const MOCKS_DIR = resolve(__dirname, './mocks');
-const regexes = {
+const assertions = {
   staticHostIncluded: /https:\/\/kibana-coverage\.elastic\.dev/,
   jobNameIncluded: /jobs\/elastic\+kibana\+code-coverage/,
   timeStampIncluded: /\d{4}-\d{2}-\d{2}T\d{2}.*\d{2}.*\d{2}Z/,
   folderStructureIncluded: /live_cc_app\/coverage_data/,
   endsInDotHtml: /.html$/,
 };
+const env = {
+  BUILD_ID: 407,
+  CI_RUN_URL: 'https://kibana-ci.elastic.co/job/elastic+kibana+code-coverage/407/',
+  STATIC_SITE_URL_BASE: 'https://kibana-coverage.elastic.dev/jobs/elastic+kibana+code-coverage',
+  TIME_STAMP: '2020-03-02T21:11:47Z',
+  ES_HOST: 'https://super:changeme@142fea2d3047486e925eb8b223559cae.europe-west1.gcp.cloud.es.io:9243',
+  NODE_ENV: 'integration_test',
+};
+
+const setup = summaryPath => done => xs => {
+  const args = [
+    'scripts/ingest_coverage.js',
+    '--debug',
+    '--path',
+    summaryPath,
+  ];
+  const create = spawn(process.execPath, args, { cwd: ROOT_DIR, env });
+  create.stdout.on('data', x => xs.push(x + ''));
+  create.on('close', done);
+};
+
+const resolveMocksDirWith = resolve.bind(null, MOCKS_DIR);
+const setupWithoutTotals = setup(resolveMocksDirWith('jest-combined/coverage-summary-NO-total.json'));
+const setupWithTotals = setup(resolveMocksDirWith('jest-combined/coverage-summary-just-total.json'));
 
 describe('Ingesting Coverage to Cluster', () => {
-  const chunks = [];
+  describe('Without "Totals" Data', () => {
+    const chunksWithoutTotals = [];
 
-  const env = {
-    BUILD_ID: 407,
-    CI_RUN_URL: 'https://kibana-ci.elastic.co/job/elastic+kibana+code-coverage/407/',
-    STATIC_SITE_URL_BASE: 'https://kibana-coverage.elastic.dev/jobs/elastic+kibana+code-coverage',
-    TIME_STAMP: '2020-03-02T21:11:47Z',
-    ES_HOST: 'https://super:changeme@142fea2d3047486e925eb8b223559cae.europe-west1.gcp.cloud.es.io:9243',
-    NODE_ENV: 'integration_test',
-  };
+    beforeAll(done => {
+      setupWithoutTotals(done)(chunksWithoutTotals);
+    });
 
-  beforeAll(done => {
-    const coverageSummaryPath = resolve(MOCKS_DIR, 'jest-combined/coverage-summary-NO-total.json');
-    const args = [
-      'scripts/ingest_coverage.js',
-      '--debug',
-      '--path',
-      coverageSummaryPath,
-    ];
+    it('should result in every posted item having a static site url that meets certain requirements, tested via regex', () => {
+      const includesSiteUrlPredicate = x => x.includes('staticSiteUrl');
+      const expectAllRegexesToPass = urlLine =>
+        Object.entries(assertions).forEach(reList => expect(reList[1].test(urlLine)).to.be(true));
 
-    const create = spawn(process.execPath, args, { cwd: ROOT_DIR, env });
+      chunksWithoutTotals
+        .filter(includesSiteUrlPredicate)
+        .map(x => x.split('\n').reduce(getUrlLine))
+        .forEach(expectAllRegexesToPass);
+    })
+  });
+  describe('With "Totals" Data', () => {
+    const chunksWithTotals = [];
 
-    create.stdout.on('data', x => chunks.push(x + ''));
-    create.on('close', done);
+    beforeAll(done => {
+      setupWithTotals(done)(chunksWithTotals);
+    });
+    it('NOT IMPLEMENTED YET', () => {
+      expect(true).to.be(true);
+    });
   });
 
-  it('should result in every posted item having a static site url that meets certain requirements, tested via regex', () => {
-    const includesSiteUrlPredicate = x => x.includes('staticSiteUrl');
-    const expectAllRegexesToPass = urlLine =>
-      Object.entries(regexes).forEach(reList => expect(reList[1].test(urlLine)).to.be(true));
-
-    chunks
-      .filter(includesSiteUrlPredicate)
-      .map(x => x.split('\n').reduce(getUrlLine))
-      .forEach(expectAllRegexesToPass);
-  });
 });
 
 function getUrlLine(acc, item) {
